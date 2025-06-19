@@ -531,7 +531,7 @@ class FisherPruningHook(Hook):
         
         # 打印所有模块名用于调试
         all_module_names = list(dict(model.named_modules()).keys())
-        print(f"模型所有模块名: {all_module_names}")
+        #print(f"模型所有模块名: {all_module_names}")
         
         # 尝试找到与backbone最接近的模块名，这里可以根据实际模型结构调整
         # 你也可以通过配置文件或命令行参数指定要使用的模块名
