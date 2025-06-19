@@ -515,42 +515,33 @@ class FisherPruningHook(Hook):
         self.conv_names_group = [[item.name for item in v]
                                  for idx, v in self.groups.items()]
 
-    def set_group_masks(self, model):
-        """the modules(convolutions and BN) connect to same convolutions need
-        change the out channels at same time when pruning, divide the modules
-        into different groups according to the connection.
-
-        Args:
-            model(nn.Module): the model contains all modules
-        """
-
-        # 修改：使用更灵活的模块查找方式，支持不同的模型结构
-        # 原代码中固定使用 ['backbone', 'neck', 'bbox_head'] 可能不适用于所有模型
-        # 这里改为使用用户指定的模块路径或根据模型结构自动推断
-        # 如果用户没有指定，尝试使用常见的模块名
-        
-        # 打印所有模块名用于调试
-        all_module_names = list(dict(model.named_modules()).keys())
-        #print(f"模型所有模块名: {all_module_names}")
-        
-        # 尝试找到与backbone最接近的模块名，这里可以根据实际模型结构调整
-        # 你也可以通过配置文件或命令行参数指定要使用的模块名
-        net_names = []
-        # 查找可能的主干网络模块
-        if 'backbone' in all_module_names:
-            net_names.append('backbone')
-        elif 'layer1' in all_module_names:
-            # 对于CIFAR_ResNet模型，可能使用layer1, layer2等作为主干
-            net_names = ['layer1', 'layer2', 'layer3', 'layer4']
-        elif 'features' in all_module_names:
-            net_names.append('features')
-        else:
-            # 如果找不到合适的模块名，使用整个模型
-            net_names = ['']
-        
-        print(f"选择的模块名: {net_names}")
-        
-        inputs = torch.zeros(1, 3, 256, 256).cuda()
+def set_group_masks(self, model):
+    """生成与模型结构匹配的伪输入"""
+    # 获取模型第一个卷积层的输出通道数
+    first_conv = None
+    for module in model.modules():
+        if isinstance(module, nn.Conv2d):
+            first_conv = module
+            break
+    
+    if first_conv is None:
+        raise ValueError("模型中没有找到Conv2d层")
+    
+    # 根据第一个卷积层的配置生成输入
+    in_channels = first_conv.in_channels
+    out_channels = first_conv.out_channels
+    
+    # 如果是标准ResNet结构（第一个卷积升维到64通道）
+    if in_channels == 3 and out_channels == 64:
+        # 原始输入（3通道）
+        dummy_input = torch.randn(1, 3, 32, 32).cuda()  # CIFAR尺寸
+        # 模拟经过conv1后的特征（64通道）
+        with torch.no_grad():
+            features = first_conv(dummy_input)
+        inputs = features
+    else:
+        # 其他模型结构使用原始输入
+        inputs = torch.randn(1, in_channels, 32, 32).cuda()
 
         for name in net_names:
             if name:
