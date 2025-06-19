@@ -712,7 +712,7 @@ def add_pruning_attrs(module, pruning=False):
         pruning (bool): Indicating the state of model which
             will make conv's forward behave differently.
     """
-    if type(module).__name__ == 'Conv2d':
+    if isinstance(module, nn.Conv2d):  # 使用isinstance更规范
         # 确保mask与权重在同一设备
         device = module.weight.device
         module.register_buffer(
@@ -732,27 +732,14 @@ def add_pruning_attrs(module, pruning=False):
                           self.padding, self.dilation, self.groups)
         
         module.forward = MethodType(modified_forward, module)
-    # TODO: mask  change to bool
-    if type(module).__name__ == 'Conv2d':
-        module.register_buffer(
-            'in_mask', module.weight.new_ones((1, module.in_channels, 1, 1), ))
-        module.register_buffer(
-            'out_mask', module.weight.new_ones(
-                (1, module.out_channels, 1, 1), ))
-        module.finetune = not pruning
 
-        def modified_forward(self, feature):
-            if not self.finetune:
-                feature = feature * self.in_mask
-            return F.conv2d(feature, self.weight, self.bias, self.stride,
-                            self.padding, self.dilation, self.groups)
-
-        module.forward = MethodType(modified_forward, module)
-    if 'BatchNorm' in type(module).__name__:
+    elif isinstance(module, (_BatchNorm, nn.BatchNorm2d, nn.BatchNorm1d)):
+        # 处理BatchNorm层
+        device = module.weight.device if hasattr(module, 'weight') else 'cpu'
         module.register_buffer(
-            'out_mask', module.weight.new_ones(
-                (1, len(module.weight), 1, 1), ))
-
+            'out_mask',
+            torch.ones((1, len(module.weight), 1, 1), device=device)
+        )
 
 def deploy_pruning(model):
     """To speed up the finetune process, We change the shape of parameter
