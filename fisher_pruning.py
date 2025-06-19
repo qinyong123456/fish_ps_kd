@@ -533,6 +533,11 @@ class FisherPruningHook(Hook):
                                  for idx, v in self.groups.items()]
 
     def set_group_masks(self, model):
+        # 获取模型设备
+        device = next(model.parameters()).device
+    
+        # 生成匹配设备的输入
+        dummy_input = torch.randn(1, 3, 32, 32).to(device)
         """生成与模型结构匹配的伪输入"""
         # 获取模型第一个卷积层的输出通道数
         first_conv = None
