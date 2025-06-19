@@ -213,10 +213,10 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
     #----------------------------------------------------
     #  Declare CNN Clasifier#
     #----------------------------------------------------
-    net = get_network(args)  # 先构建模型，net就是模型对象
+    #net = get_network(args)  # 先构建模型，net就是模型对象
     # 在这里打印模型结构和模块名称
-    print("模型结构:", net)  
-    print("所有模块名称:", list(net.named_modules()))
+    #print("模型结构:", net)  
+    #print("所有模块名称:", list(net.named_modules()))
     
     #----------------------------------------------------
     #  Initialize Fisher Pruning Hook
