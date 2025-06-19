@@ -99,7 +99,7 @@ class FisherPruningHook(Hook):
         self.save_flops_thr = save_flops_thr
         self.save_acts_thr = save_acts_thr
         if self.pruning:
-            assert torch.__version__.startswith('1.3'), (
+            assert torch.__version__.startswith('2.'), (
                 'Due to the frequent changes of the autograd '
                 'interface, we only guarantee it works well in pytorch==1.3.')
 
