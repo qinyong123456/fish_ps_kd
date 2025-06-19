@@ -533,13 +533,17 @@ class FisherPruningHook(Hook):
                                  for idx, v in self.groups.items()]
 
     def set_group_masks(self, model):
+        """设置分组掩码，自动识别模型结构"""
         # 获取模型设备
         device = next(model.parameters()).device
-    
+        
+        # 自动检测网络模块名
+        net_names = self._detect_network_modules(model)
+        
         # 生成匹配设备的输入
         dummy_input = torch.randn(1, 3, 32, 32).to(device)
-        """生成与模型结构匹配的伪输入"""
-        # 获取模型第一个卷积层的输出通道数
+        
+        # 获取第一个卷积层
         first_conv = None
         for module in model.modules():
             if isinstance(module, nn.Conv2d):
@@ -549,58 +553,53 @@ class FisherPruningHook(Hook):
         if first_conv is None:
             raise ValueError("模型中没有找到Conv2d层")
         
-        # 根据第一个卷积层的配置生成输入
-        in_channels = first_conv.in_channels
-        out_channels = first_conv.out_channels
-        
-        # 如果是标准ResNet结构（第一个卷积升维到64通道）
-        if in_channels == 3 and out_channels == 64:
-            # 原始输入（3通道）
-            dummy_input = torch.randn(1, 3, 32, 32).cuda()  # CIFAR尺寸
-            # 模拟经过conv1后的特征（64通道）
-            with torch.no_grad():
+        # 处理输入特征
+        with torch.no_grad():
+            if first_conv.in_channels == 3 and first_conv.out_channels == 64:
                 features = first_conv(dummy_input)
-            inputs = features
-        else:
-            # 其他模型结构使用原始输入
-            inputs = torch.randn(1, in_channels, 32, 32).cuda()
-
+                inputs = features
+            else:
+                inputs = torch.randn(1, first_conv.in_channels, 32, 32).to(device)
+        
+        # 处理每个网络模块
         for name in net_names:
             if name:
-                # 使用更安全的模块查找方式
-                net = dict(model.named_modules()).get(name, None)
+                net = dict(model.named_modules()).get(name)
                 if net is None:
                     self.logger.warning(f"模块 {name} 未找到，跳过该模块")
                     continue
             else:
-                # 如果name为空，使用整个模型
                 net = model
                 
-            print(f"处理模块: {name}, 类型: {type(net)}")
-            inputs = net(inputs)
-            
+            with torch.no_grad():
+                inputs = net(inputs)
+        
+        # 后续处理
         loss = onestage_wrapper(inputs)
-        # self.conv2ancest is a dict, key is all conv instance in
-        # model, value is a list which contains all nearest  ancestor
-        # conv, and self.conv_link describe the connection using module
-        # name
         self.conv2ancest = self.find_module_ancestors(loss, NON_PASS)
         self.conv_link = {
             k.name: [item.name for item in v]
             for k, v in self.conv2ancest.items()
         }
-        # key is bn module, and value is a list of nearest
-        # ancestor convs
         self.bn2ancest = self.find_module_ancestors(loss, BN)
         loss.sum().backward()
         self.make_groups()
-
-        # list contains all the convs which are contained in a
-        # group (if more the one conv has same ancestor,
-        # they will be in same group)
+        
         self.group_modules = []
         for group in self.groups:
             self.group_modules.extend(self.groups[group])
+
+def _detect_network_modules(self, model):
+    """自动检测网络模块名"""
+    all_module_names = list(dict(model.named_modules()).keys())
+    possible_names = ['backbone', 'features', 'layer']
+    
+    detected_names = []
+    for name in all_module_names:
+        if any(p in name for p in possible_names):
+            detected_names.append(name)
+    
+    return detected_names if detected_names else ['']
 
     def find_module_ancestors(self, loss, pattern):
         """find the nearest Convolution of the module
