@@ -129,9 +129,9 @@ class FisherPruningHook(Hook):
         self.logger = runner.logger
 
         # 打印模型结构用于调试
-        print("模型结构：")
-        for name, module in runner.model.named_modules():
-            print(f"模块名: {name}, 类型: {type(module)}")
+        #print("模型结构：")
+        #for name, module in runner.model.named_modules():
+            #print(f"模块名: {name}, 类型: {type(module)}")
             
         for n, m in runner.model.named_modules():
             if self.pruning:
@@ -712,6 +712,25 @@ def add_pruning_attrs(module, pruning=False):
         pruning (bool): Indicating the state of model which
             will make conv's forward behave differently.
     """
+    if type(module).__name__ == 'Conv2d':
+        # 确保mask与权重在同一设备
+        device = module.weight.device
+        module.register_buffer(
+            'in_mask', 
+            torch.ones((1, module.in_channels, 1, 1), device=device)
+        module.register_buffer(
+            'out_mask',
+            torch.ones((1, module.out_channels, 1, 1), device=device)
+        )
+        module.finetune = not pruning
+
+        def modified_forward(self, feature):
+            if not self.finetune:
+                feature = feature * self.in_mask.to(feature.device)  # 显式设备转换
+            return F.conv2d(feature, self.weight, self.bias, self.stride,
+                          self.padding, self.dilation, self.groups)
+        
+        module.forward = MethodType(modified_forward, module)
     # TODO: mask  change to bool
     if type(module).__name__ == 'Conv2d':
         module.register_buffer(
