@@ -718,6 +718,7 @@ def add_pruning_attrs(module, pruning=False):
         module.register_buffer(
             'in_mask', 
             torch.ones((1, module.in_channels, 1, 1), device=device)
+        )
         module.register_buffer(
             'out_mask',
             torch.ones((1, module.out_channels, 1, 1), device=device)
