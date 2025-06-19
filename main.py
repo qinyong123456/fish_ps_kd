@@ -36,7 +36,10 @@ from utils.metric import metric_ece_aurc_eaurc
 from utils.color import Colorer
 from utils.etc import progress_bar, is_main_process, save_on_master, paser_config_save, set_logging_defaults
 
-
+#--------------
+# Fisher Pruning
+#--------------
+from fisher_pruning import FisherPruningHook  # 导入Fisher剪枝钩子
 
 #----------------------------------------------------
 #  Etc
@@ -79,6 +82,13 @@ def parse_args():
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
     parser.add_argument('--resume', type=str, default=None, help='load model path')
+    
+    # 新增剪枝相关参数
+    parser.add_argument('--prune', action='store_true', help='Enable Fisher pruning')
+    parser.add_argument('--prune_delta', type=str, default='acts', choices=['acts', 'flops'], help='Pruning metric (acts/flops)')
+    parser.add_argument('--prune_interval', type=int, default=10, help='Pruning interval (iterations)')
+    parser.add_argument('--prune_save_flops', nargs='*', type=float, default=[0.75, 0.5, 0.25], help='Save checkpoints at specific flops thresholds')
+    parser.add_argument('--prune_save_acts', nargs='*', type=float, default=[0.75, 0.5, 0.25], help='Save checkpoints at specific acts thresholds')
 
     args = parser.parse_args()
     return check_args(args)
@@ -96,6 +106,10 @@ def check_args(args):
         assert args.batch_size >= 1
     except:
         print('batch size must be larger than or equal to one')
+    
+    # 检查剪枝参数
+    if args.prune:
+        assert args.prune_delta in ['acts', 'flops'], "Prune delta must be 'acts' or 'flops'"
 
     return args
     
@@ -151,7 +165,7 @@ def main():
     #----------------------------------------------------
     #  Prompt color print
     #----------------------------------------------------
-    print(C.green("[!] Start the PS-KD."))
+    print(C.green("[!] Start the PS-KD with Fisher Pruning."))
     print(C.green("[!] Created by LG CNS AI Research(LAIR)"))
     
     #-------------------------------------------------------------
@@ -196,11 +210,36 @@ def main():
 def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
     best_acc = 0
 
-    
     #----------------------------------------------------
     #  Declare CNN Clasifier#
     #----------------------------------------------------
     net = get_network(args)
+
+    #----------------------------------------------------
+    #  Initialize Fisher Pruning Hook
+    #----------------------------------------------------
+    pruning_hook = None
+    if args.prune:
+        pruning_hook = FisherPruningHook(
+            pruning=True,
+            delta=args.prune_delta,
+            batch_size=args.batch_size,
+            interval=args.prune_interval,
+            deploy_from=None,
+            save_flops_thr=args.prune_save_flops,
+            save_acts_thr=args.prune_save_acts
+        )
+        # 模拟Runner接口以初始化钩子
+        class MockRunner:
+            def __init__(self, model, logger, world_size):
+                self.model = model
+                self.logger = logger
+                self.world_size = world_size
+                self.work_dir = model_dir  # 设置工作目录用于保存检查点
+        runner = MockRunner(net, logging.getLogger('pruning'), args.world_size)
+        pruning_hook.before_run(runner)
+        print(C.green("[!] Fisher Pruning initialized with delta: {}, interval: {}".format(
+            args.prune_delta, args.prune_interval)))
 
     #----------------------------------------------------
     #  Multiprocessing & Distributed Training 
@@ -239,7 +278,7 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
             print(C.underline(C.yellow("[Info] [Rank {}] Workers: {}".format(args.rank, args.workers))))
             print(C.underline(C.yellow("[Info] [Rank {}] Batch_size: {}".format(args.rank, args.batch_size))))
             
-            net = torch.nn.parallel.DistributedDataParallel(net,device_ids=[args.gpu])
+            net = torch.nn.parallel.DistributedDataParallel(net, device_ids=[args.gpu])
             print(C.green("[!] [Rank {}] Distributed DataParallel Setting End".format(args.rank)))
             
         else:
@@ -336,7 +375,9 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
                                 epoch,
                                 alpha_t,
                                 train_loader,
-                                args)
+                                args,
+                                pruning_hook  # 传入剪枝钩子
+        )
 
         if args.distributed:
             dist.barrier()
@@ -348,7 +389,8 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
                   net,
                   epoch,
                   valid_loader,
-                  args)
+                  args
+        )
 
         #---------------------------------------------------
         #  Save_dict for saving model
@@ -365,12 +407,12 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
 
         if acc > best_acc:
             best_acc = acc
-            save_on_master(save_dict,os.path.join(model_dir, 'checkpoint_best.pth'))
+            save_on_master(save_dict, os.path.join(model_dir, 'checkpoint_best.pth'))
             if is_main_process():
                 print(C.green("[!] Save best checkpoint."))
 
         if args.saveckp_freq and (epoch + 1) % args.saveckp_freq == 0:
-            save_on_master(save_dict,os.path.join(model_dir, f'checkpoint_{epoch:03}.pth'))
+            save_on_master(save_dict, os.path.join(model_dir, f'checkpoint_{epoch:03}.pth'))
             if is_main_process():
                 print(C.green("[!] Save checkpoint."))
 
@@ -392,8 +434,8 @@ def train(all_predictions,
           epoch,
           alpha_t,
           train_loader,
-          args):
-    
+          args,
+          pruning_hook):
     
     train_top1 = AverageMeter()
     train_top5 = AverageMeter()
@@ -466,7 +508,31 @@ def train(all_predictions,
             else:
                 all_predictions[input_indices] = softmax_output.cpu().detach()
         
-        progress_bar(epoch,batch_idx, len(train_loader), args, 'lr: {:.1e} | alpha_t: {:.3f} | loss: {:.3f} | top1_acc: {:.3f} | top5_acc: {:.3f} | correct/total({}/{})'.format(
+        #-----------------------------------
+        #  Fisher Pruning Execution
+        #-----------------------------------
+        if pruning_hook:
+            # 模拟Runner接口
+            class RunnerIter:
+                def __init__(self, model, epoch, iter, world_size, logger, work_dir):
+                    self.model = model
+                    self.epoch = epoch
+                    self.iter = iter
+                    self.world_size = world_size
+                    self.logger = logger
+                    self.work_dir = work_dir
+            runner_iter = RunnerIter(
+                net, epoch, batch_idx, args.world_size, 
+                logging.getLogger('train'), args.experiments_dir
+            )
+            pruning_hook.after_train_iter(runner_iter)  # 处理Fisher信息累积
+            
+            # 每隔interval次迭代执行实际剪枝
+            if (batch_idx + 1) % pruning_hook.interval == 0:
+                pruning_hook.channel_prune()
+                pruning_hook.print_model(runner_iter, print_channel=True)
+
+        progress_bar(epoch, batch_idx, len(train_loader), args, 'lr: {:.1e} | alpha_t: {:.3f} | loss: {:.3f} | top1_acc: {:.3f} | top5_acc: {:.3f} | correct/total({}/{})'.format(
             current_LR, alpha_t, train_losses.avg, train_top1.avg, train_top5.avg, correct, total))
 
     if args.distributed:
