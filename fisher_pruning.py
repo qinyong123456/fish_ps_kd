@@ -515,33 +515,33 @@ class FisherPruningHook(Hook):
         self.conv_names_group = [[item.name for item in v]
                                  for idx, v in self.groups.items()]
 
-def set_group_masks(self, model):
-    """生成与模型结构匹配的伪输入"""
-    # 获取模型第一个卷积层的输出通道数
-    first_conv = None
-    for module in model.modules():
-        if isinstance(module, nn.Conv2d):
-            first_conv = module
-            break
-    
-    if first_conv is None:
-        raise ValueError("模型中没有找到Conv2d层")
-    
-    # 根据第一个卷积层的配置生成输入
-    in_channels = first_conv.in_channels
-    out_channels = first_conv.out_channels
-    
-    # 如果是标准ResNet结构（第一个卷积升维到64通道）
-    if in_channels == 3 and out_channels == 64:
-        # 原始输入（3通道）
-        dummy_input = torch.randn(1, 3, 32, 32).cuda()  # CIFAR尺寸
-        # 模拟经过conv1后的特征（64通道）
-        with torch.no_grad():
-            features = first_conv(dummy_input)
-        inputs = features
-    else:
-        # 其他模型结构使用原始输入
-        inputs = torch.randn(1, in_channels, 32, 32).cuda()
+    def set_group_masks(self, model):
+        """生成与模型结构匹配的伪输入"""
+        # 获取模型第一个卷积层的输出通道数
+        first_conv = None
+        for module in model.modules():
+            if isinstance(module, nn.Conv2d):
+                first_conv = module
+                break
+        
+        if first_conv is None:
+            raise ValueError("模型中没有找到Conv2d层")
+        
+        # 根据第一个卷积层的配置生成输入
+        in_channels = first_conv.in_channels
+        out_channels = first_conv.out_channels
+        
+        # 如果是标准ResNet结构（第一个卷积升维到64通道）
+        if in_channels == 3 and out_channels == 64:
+            # 原始输入（3通道）
+            dummy_input = torch.randn(1, 3, 32, 32).cuda()  # CIFAR尺寸
+            # 模拟经过conv1后的特征（64通道）
+            with torch.no_grad():
+                features = first_conv(dummy_input)
+            inputs = features
+        else:
+            # 其他模型结构使用原始输入
+            inputs = torch.randn(1, in_channels, 32, 32).cuda()
 
         for name in net_names:
             if name:
