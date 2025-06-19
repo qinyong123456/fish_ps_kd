@@ -127,7 +127,24 @@ class FisherPruningHook(Hook):
         self.conv_names = OrderedDict()
         self.bn_names = OrderedDict()
         self.logger = runner.logger
-
+         model = runner.model
+    
+        # 确保模型在GPU上
+        if torch.cuda.is_available():
+            model.cuda()
+        
+        # 同步所有参数和缓冲区
+        for module in model.modules():
+            # 确保权重在正确设备
+            if hasattr(module, 'weight'):
+                module.weight = nn.Parameter(module.weight.data.cuda() if torch.cuda.is_available() else module.weight.data)
+            
+            # 确保缓冲区在正确设备
+            for name, buffer in module.named_buffers():
+                if torch.cuda.is_available():
+                    setattr(module, name, buffer.cuda())
+        
+        self.set_group_masks(model)
         # 打印模型结构用于调试
         #print("模型结构：")
         #for name, module in runner.model.named_modules():
@@ -703,20 +720,13 @@ class FisherPruningHook(Hook):
 
 
 def add_pruning_attrs(module, pruning=False):
-    """When module is conv, add `finetune` attribute, register `mask` buffer
-    and change the origin `forward` function. When module is BN, add `out_mask`
-    attribute to module.
-
-    Args:
-        conv (nn.Conv2d):  The instance of `torch.nn.Conv2d`
-        pruning (bool): Indicating the state of model which
-            will make conv's forward behave differently.
-    """
-    if isinstance(module, nn.Conv2d):  # 使用isinstance更规范
-        # 确保mask与权重在同一设备
+    if isinstance(module, nn.Conv2d):
+        # 确保所有内容都在同一设备
         device = module.weight.device
+        
+        # 注册缓冲区并确保在正确设备上
         module.register_buffer(
-            'in_mask', 
+            'in_mask',
             torch.ones((1, module.in_channels, 1, 1), device=device)
         )
         module.register_buffer(
@@ -725,17 +735,18 @@ def add_pruning_attrs(module, pruning=False):
         )
         module.finetune = not pruning
 
+        # 保存原始forward方法
+        original_forward = module.forward
+        
         def modified_forward(self, feature):
             if not self.finetune:
-                feature = feature * self.in_mask.to(feature.device)  # 显式设备转换
-            return F.conv2d(feature, self.weight, self.bias, self.stride,
-                          self.padding, self.dilation, self.groups)
+                feature = feature * self.in_mask
+            return original_forward(feature)
         
         module.forward = MethodType(modified_forward, module)
 
-    elif isinstance(module, (_BatchNorm, nn.BatchNorm2d, nn.BatchNorm1d)):
-        # 处理BatchNorm层
-        device = module.weight.device if hasattr(module, 'weight') else 'cpu'
+    elif isinstance(module, (_BatchNorm, nn.BatchNorm2d)):
+        device = module.weight.device
         module.register_buffer(
             'out_mask',
             torch.ones((1, len(module.weight), 1, 1), device=device)
