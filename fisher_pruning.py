@@ -128,6 +128,11 @@ class FisherPruningHook(Hook):
         self.bn_names = OrderedDict()
         self.logger = runner.logger
 
+        # 打印模型结构用于调试
+        print("模型结构：")
+        for name, module in runner.model.named_modules():
+            print(f"模块名: {name}, 类型: {type(module)}")
+            
         for n, m in runner.model.named_modules():
             if self.pruning:
                 add_pruning_attrs(m, pruning=self.pruning)
@@ -519,20 +524,48 @@ class FisherPruningHook(Hook):
             model(nn.Module): the model contains all modules
         """
 
-        # TODO: support two stage model
-        net_names = ['backbone', 'neck', 'bbox_head']
-
-        def onestage_wrapper(x):
-            out = 0.
-            for levels in x:
-                out += sum([level.sum() for level in levels])
-            return out
-
+        # 修改：使用更灵活的模块查找方式，支持不同的模型结构
+        # 原代码中固定使用 ['backbone', 'neck', 'bbox_head'] 可能不适用于所有模型
+        # 这里改为使用用户指定的模块路径或根据模型结构自动推断
+        # 如果用户没有指定，尝试使用常见的模块名
+        
+        # 打印所有模块名用于调试
+        all_module_names = list(dict(model.named_modules()).keys())
+        print(f"模型所有模块名: {all_module_names}")
+        
+        # 尝试找到与backbone最接近的模块名，这里可以根据实际模型结构调整
+        # 你也可以通过配置文件或命令行参数指定要使用的模块名
+        net_names = []
+        # 查找可能的主干网络模块
+        if 'backbone' in all_module_names:
+            net_names.append('backbone')
+        elif 'layer1' in all_module_names:
+            # 对于CIFAR_ResNet模型，可能使用layer1, layer2等作为主干
+            net_names = ['layer1', 'layer2', 'layer3', 'layer4']
+        elif 'features' in all_module_names:
+            net_names.append('features')
+        else:
+            # 如果找不到合适的模块名，使用整个模型
+            net_names = ['']
+        
+        print(f"选择的模块名: {net_names}")
+        
         inputs = torch.zeros(1, 3, 256, 256).cuda()
 
         for name in net_names:
-            net = dict(model.named_modules())[f'module.{name}']
+            if name:
+                # 使用更安全的模块查找方式
+                net = dict(model.named_modules()).get(name, None)
+                if net is None:
+                    self.logger.warning(f"模块 {name} 未找到，跳过该模块")
+                    continue
+            else:
+                # 如果name为空，使用整个模型
+                net = model
+                
+            print(f"处理模块: {name}, 类型: {type(net)}")
             inputs = net(inputs)
+            
         loss = onestage_wrapper(inputs)
         # self.conv2ancest is a dict, key is all conv instance in
         # model, value is a list which contains all nearest  ancestor
@@ -737,3 +770,10 @@ def deploy_pruning(model):
             module.running_var = module.running_var[out_mask]
             module.weight.requires_grad = requires_grad
             module.bias.requires_grad = requires_grad
+
+# 辅助函数，确保代码能正常运行
+def onestage_wrapper(x):
+    out = 0.
+    for levels in x:
+        out += sum([level.sum() for level in levels])
+    return out
