@@ -208,18 +208,16 @@ def main():
         
 
 def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
-    # 在 main.py 的 main_worker 函数中添加
-    print("模型结构:", model)  # 添加这行查看完整模型结构
-    # 检查可用模块名称
-    print("所有模块名称:", list(model.named_modules()))
-    
     best_acc = 0
 
     #----------------------------------------------------
     #  Declare CNN Clasifier#
     #----------------------------------------------------
-    net = get_network(args)
-
+    net = get_network(args)  # 先构建模型，net就是模型对象
+    # 在这里打印模型结构和模块名称
+    print("模型结构:", net)  
+    print("所有模块名称:", list(net.named_modules()))
+    
     #----------------------------------------------------
     #  Initialize Fisher Pruning Hook
     #----------------------------------------------------
