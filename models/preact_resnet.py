@@ -95,8 +95,9 @@ class Bottleneck(nn.Module):
 
         return out
 
+
 class PreActBlock(nn.Module):
-    '''Pre-activation version of the BasicBlock.'''
+    '''Pre-activation version of the BasicBlock with fixed residual connection.'''
     expansion = 1
 
     def __init__(self, in_planes, planes, stride=1):
@@ -113,11 +114,23 @@ class PreActBlock(nn.Module):
             )
 
     def forward(self, x):
-        out = F.relu(self.bn1(x))
-        shortcut = self.shortcut(out)
+        # 保存原始输入用于残差连接
+        identity = x
+        
+        # 第一个预激活单元: BN -> ReLU -> Conv
+        out = self.bn1(x)
+        out = F.relu(out)
         out = self.conv1(out)
-        out = self.conv2(F.relu(self.bn2(out)))
-        out += shortcut
+        
+        # 第二个预激活单元: BN -> ReLU -> Conv
+        out = self.bn2(out)
+        out = F.relu(out)
+        out = self.conv2(out)
+        
+        # 应用残差连接
+        identity = self.shortcut(identity)  # 对原始输入应用shortcut
+        out += identity
+        
         return out
     
     
@@ -262,11 +275,9 @@ class CIFAR_ResNet(nn.Module):
         return out
 
 
-
 def CIFAR_ResNet18_preActBasic(**kwargs):
     return CIFAR_ResNet(PreActBlock, [2,2,2,2], **kwargs)
 
 
 def CIFAR_ResNet101_Bottle(**kwargs):
     return CIFAR_ResNet(Bottleneck_CIFAR, [3,4,23,3], **kwargs)
-
