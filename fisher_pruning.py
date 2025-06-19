@@ -123,12 +123,12 @@ class FisherPruningHook(Hook):
         calculating the importance of the channel, and use the layer-grouping
         algorithm to make the coupled module shared the mask of input
         channel."""
-
+    
         self.conv_names = OrderedDict()
         self.bn_names = OrderedDict()
         self.logger = runner.logger
-    model = runner.model
-    
+        model = runner.model
+        
         # 确保模型在GPU上
         if torch.cuda.is_available():
             model.cuda()
